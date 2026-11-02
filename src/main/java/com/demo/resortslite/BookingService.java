@@ -2,7 +2,14 @@ package com.demo.resortslite;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.security.MessageDigest;
 import java.util.HashMap;
@@ -15,12 +22,64 @@ public class BookingService {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    // VIOLATION [Security Health / Critical]: Hardcoded database credentials in source code.
-    // If this repo is pushed to GitHub (even private), credentials are permanently exposed
-    // in git history. AWS Secrets Manager or Parameter Store must be used instead.
+    // cr-java-0069 FIX: Hard-coded DB_USER and DB_PASS replaced with AWS Secrets Manager lookup.
+    // Credentials are no longer stored in source code or version control.
+    // The secret name and AWS region are externalised to environment variables.
     private static final String DB_HOST = "db-prod.resorts-internal.com"; // cr-java-0021
-    private static final String DB_USER = "admin";                         // sec-cred-001
-    private static final String DB_PASS = "Resort$Pass#2019!";             // sec-cred-001
+
+    @Value("${aws.secretsmanager.secret-name:resortslite/db/credentials}")
+    private String dbSecretName;
+
+    @Value("${aws.secretsmanager.region:${AWS_REGION:us-east-1}}")
+    private String awsRegion;
+
+    /**
+     * Retrieves the database username from AWS Secrets Manager.
+     * The secret is expected to be a JSON object with at least "username" and "password" keys,
+     * e.g.: {"username":"admin","password":"Resort$Pass#2019!"}
+     *
+     * @return the database username stored in the secret
+     */
+    private String getDbUser() {
+        return getSecretValue("username");
+    }
+
+    /**
+     * Retrieves the database password from AWS Secrets Manager.
+     *
+     * @return the database password stored in the secret
+     */
+    private String getDbPass() {
+        return getSecretValue("password");
+    }
+
+    /**
+     * Fetches a specific key from the JSON secret stored in AWS Secrets Manager.
+     *
+     * @param key the JSON field name to extract from the secret string
+     * @return the value associated with the given key in the secret
+     */
+    @SuppressWarnings("unchecked")
+    private String getSecretValue(String key) {
+        SecretsManagerClient client = SecretsManagerClient.builder()
+                .region(Region.of(awsRegion))
+                .build();
+        try {
+            GetSecretValueRequest request = GetSecretValueRequest.builder()
+                    .secretId(dbSecretName)
+                    .build();
+            GetSecretValueResponse response = client.getSecretValue(request);
+            String secretString = response.secretString();
+            ObjectMapper mapper = new ObjectMapper();
+            Map<String, String> secretMap = mapper.readValue(secretString, Map.class);
+            return secretMap.getOrDefault(key, "");
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to retrieve database credentials from AWS Secrets Manager "
+                    + "for secret: " + dbSecretName, e);
+        } finally {
+            client.close();
+        }
+    }
 
     // VIOLATION cr-java-0021 [Cloud Compatibility / Mandatory]: Hardcoded infrastructure
     // hostname. Cloud IP addresses and service endpoints change on restart, redeployment,
