@@ -19,8 +19,12 @@ public class BookingService {
     // If this repo is pushed to GitHub (even private), credentials are permanently exposed
     // in git history. AWS Secrets Manager or Parameter Store must be used instead.
     private static final String DB_HOST = "db-prod.resorts-internal.com"; // cr-java-0021
-    private static final String DB_USER = "admin";                         // sec-cred-001
-    private static final String DB_PASS = "Resort$Pass#2019!";             // sec-cred-001
+    // cr-java-0069 FIX: DB_USER and DB_PASS hard-coded constants removed.
+    // Database credentials are now retrieved at runtime from AWS Secrets Manager
+    // via AwsSecretsManagerConfig (secret name configured by app.db.secret.name property).
+
+    @Autowired
+    private AwsSecretsManagerConfig secretsManagerConfig;
 
     // VIOLATION cr-java-0021 [Cloud Compatibility / Mandatory]: Hardcoded infrastructure
     // hostname. Cloud IP addresses and service endpoints change on restart, redeployment,
@@ -51,6 +55,9 @@ public class BookingService {
         booking.put("checkOut", checkOut);
         booking.put("confirmationCode", confirmCode);
         booking.put("dbHost", DB_HOST);
+        // cr-java-0069 FIX: DB credentials are now accessed via AWS Secrets Manager.
+        // Use secretsManagerConfig.getDbUsername() / getDbPassword() wherever the
+        // credentials are needed for programmatic JDBC connections.
         return booking;
     }
 

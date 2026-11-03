@@ -11,6 +11,18 @@
         <version>2.7.18</version>
     </parent>
 
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>2.25.40</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <groupId>com.demo</groupId>
     <artifactId>resortsLite</artifactId>
     <version>1.0.0</version>
@@ -46,6 +58,30 @@
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
             <scope>runtime</scope>
+        </dependency>
+        <!-- cr-java-0061 FIX: AWS SDK v2 S3 client for replacing hardcoded file path operations -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+        </dependency>
+        <!-- cr-java-0069 FIX: AWS Secrets Manager SDK for replacing hard-coded DB credentials -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>secretsmanager</artifactId>
+        </dependency>
+        <!-- cr-java-0065 FIX: Spring Session backed by Amazon ElastiCache for Redis.
+             Replaces in-process HttpSession with a distributed, Redis-backed session
+             store so all application instances remain stateless behind an AWS ALB. -->
+        <dependency>
+            <groupId>org.springframework.session</groupId>
+            <artifactId>spring-session-data-redis</artifactId>
+        </dependency>
+        <!-- cr-java-0065 FIX: Spring Data Redis (Lettuce client) — provides the
+             RedisConnectionFactory auto-configured from spring.redis.* properties
+             pointing at the Amazon ElastiCache primary endpoint. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
     </dependencies>
 
