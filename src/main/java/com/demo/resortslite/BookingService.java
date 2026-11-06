@@ -3,6 +3,12 @@ package com.demo.resortslite;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import software.amazon.awssdk.core.exception.SdkException;
+import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.security.MessageDigest;
 import java.util.HashMap;
@@ -15,12 +21,17 @@ public class BookingService {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    // VIOLATION [Security Health / Critical]: Hardcoded database credentials in source code.
-    // If this repo is pushed to GitHub (even private), credentials are permanently exposed
-    // in git history. AWS Secrets Manager or Parameter Store must be used instead.
+    // Database host (not a cloud-readiness blocker - kept as-is)
     private static final String DB_HOST = "db-prod.resorts-internal.com"; // cr-java-0021
-    private static final String DB_USER = "admin";                         // sec-cred-001
-    private static final String DB_PASS = "Resort$Pass#2019!";             // sec-cred-001
+
+    // Database credentials retrieved from AWS Secrets Manager (cr-java-0069)
+    // DB_SECRET_NAME env var holds the Secrets Manager secret name/ARN
+    // Secret JSON contains: {"username": "...", "password": "..."}
+    private static final String DB_SECRET_NAME = "DB_SECRET_NAME";
+
+    private SecretsManagerClient secretsClient;
+    private String dbUser;
+    private String dbPass;
 
     // VIOLATION cr-java-0021 [Cloud Compatibility / Mandatory]: Hardcoded infrastructure
     // hostname. Cloud IP addresses and service endpoints change on restart, redeployment,
@@ -97,6 +108,35 @@ public class BookingService {
             return false;
         }
         return true;
+    }
+
+    // Lazy retrieval of database credentials from AWS Secrets Manager (cr-java-0069)
+    // Old failure path: if the secret cannot be retrieved, credentials remain null
+    private void loadDbCredentials() {
+        if (dbUser != null && dbPass != null) {
+            return;
+        }
+        try {
+            String secretName = System.getenv(DB_SECRET_NAME);
+            if (secretName == null || secretName.isEmpty()) {
+                return;
+            }
+            if (secretsClient == null) {
+                secretsClient = SecretsManagerClient.create();
+            }
+            GetSecretValueRequest request = GetSecretValueRequest.builder()
+                    .secretId(secretName)
+                    .build();
+            GetSecretValueResponse response = secretsClient.getSecretValue(request);
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode secret = mapper.readTree(response.secretString());
+            dbUser = secret.get("username").asText();
+            dbPass = secret.get("password").asText();
+        } catch (SdkException e) {
+            // Old failure path: credentials remain null when secret store is unreachable
+        } catch (Exception e) {
+            // Old failure path: credentials remain null on parse failure
+        }
     }
 
     public String generateReport(String month) {
