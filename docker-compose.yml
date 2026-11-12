@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  rleks:
+    image: rleks:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - APP_PORT=8080
+      - DB_URL=${DB_URL:?set DB_URL}
+      - DB_USERNAME=${DB_USERNAME:?set DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD:?set DB_PASSWORD}
+      - PAYMENT_API_URL=${PAYMENT_API_URL:?set PAYMENT_API_URL}
+      - INVENTORY_API_URL=${INVENTORY_API_URL:?set INVENTORY_API_URL}
+      - NOTIFICATION_API_URL=${NOTIFICATION_API_URL:?set NOTIFICATION_API_URL}
+      - DATA_PATH=/app/data
+      - BACKUP_PATH=/app/data/backups
+      - SPRING_PROFILES_ACTIVE=dev
+    volumes:
+      - rleks-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  rleks-data:

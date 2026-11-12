@@ -1,0 +1,57 @@
+{
+  "family": "rleks-task",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::{{ACCOUNT_ID}}:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::{{ACCOUNT_ID}}:role/ecsTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "rleks",
+      "image": "{{IMAGE_URI}}",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "APP_PORT", "value": "8080" },
+        { "name": "DATA_PATH", "value": "/app/data" },
+        { "name": "BACKUP_PATH", "value": "/app/data/backups" },
+        { "name": "SPRING_PROFILES_ACTIVE", "value": "prod" },
+        { "name": "DB_URL", "value": "jdbc:h2:mem:resortdb;DB_CLOSE_DELAY=-1" },
+        { "name": "PAYMENT_API_URL", "value": "http://payment-svc.internal:9090/charge" },
+        { "name": "INVENTORY_API_URL", "value": "http://inventory-svc.internal:8081/rooms" },
+        { "name": "NOTIFICATION_API_URL", "value": "http://notify.internal:7070/send" }
+      ],
+      "secrets": [
+        { "name": "DB_USERNAME", "valueFrom": "{{DB_USERNAME_SECRET_ARN}}" },
+        { "name": "DB_PASSWORD", "valueFrom": "{{DB_PASSWORD_SECRET_ARN}}" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/rleks",
+          "awslogs-region": "{{AWS_REGION}}",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ],
+  "volumes": [
+    {
+      "name": "efs-data",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "{{EFS_FILESYSTEM_ID}}",
+        "rootDirectory": "/",
+        "transitEncryption": "ENABLED",
+        "authorizationConfig": {
+          "iam": "ENABLED"
+        }
+      }
+    }
+  ]
+}
