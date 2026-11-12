@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: resortslite-service
+  namespace: "{{NAMESPACE}}"
+  labels:
+    app: resortslite
+spec:
+  type: ClusterIP
+  selector:
+    app: resortslite
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

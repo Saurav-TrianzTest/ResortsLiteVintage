@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: resortslite
+  namespace: "{{NAMESPACE}}"
+  labels:
+    app: resortslite
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: resortslite
+  template:
+    metadata:
+      labels:
+        app: resortslite
+    spec:
+      containers:
+        - name: resortslite
+          image: "{{IMAGE_URI}}"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: APP_PORT
+              value: "8080"
+            - name: REDIS_HOST
+              value: "{{REDIS_HOST}}"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: resortslite-secrets
+                  key: REDIS_PASSWORD
+            - name: REDIS_SSL
+              value: "false"
+            - name: REPORT_BASE_PATH
+              value: "/app/data/reports"
+            - name: BACKUP_PATH
+              value: "/app/data/backups"
+            - name: PAYMENT_API
+              value: "{{PAYMENT_API}}"
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+            - name: JAVA_OPTS
+              value: "-Xmx512m -Xms256m -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0"
+            - name: TZ
+              value: "UTC"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: app-data
+          emptyDir: {}
