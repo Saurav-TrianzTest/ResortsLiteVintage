@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  resortslite:
+    image: resortslite:latest
+    container_name: resortslite
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      - APP_PORT=8080
+      - DB_USER=${DB_USER:?set DB_USER}
+      - DB_PASS=${DB_PASS:?set DB_PASS}
+      - DB_HOST=${DB_HOST:?set DB_HOST}
+      - REDIS_HOST=${REDIS_HOST:?set REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - PAYMENT_API_URL=${PAYMENT_API_URL:-http://payment-service:9090/payments/charge}
+      - INVENTORY_API_URL=${INVENTORY_API_URL:-http://inventory-service:8081/rooms}
+      - NOTIFICATION_API_URL=${NOTIFICATION_API_URL:-http://notify-service:7070/send}
+      - REPORT_BASE_PATH=${REPORT_BASE_PATH:-/app/reports}
+      - BACKUP_PATH=${BACKUP_PATH:-/app/backups}
+      - SPRING_PROFILES_ACTIVE=prod
+    volumes:
+      - ./src/main/resources/application.properties:/app/application.properties:ro

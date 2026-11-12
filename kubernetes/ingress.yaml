@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: resortslite-ingress
+  namespace: resortslite
+  annotations:
+    kubernetes.io/ingress.class: gce
+spec:
+  rules:
+    - host: resortslite.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: resortslite-service
+                port:
+                  number: 80

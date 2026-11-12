@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: resortslite
+  namespace: resortslite
+  labels:
+    app: resortslite
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: resortslite
+  template:
+    metadata:
+      labels:
+        app: resortslite
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: resortslite
+          image: "{{IMAGE_URI}}"
+          ports:
+            - containerPort: 8080
+          env:
+            - name: APP_PORT
+              value: "8080"
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: resortslite-secrets
+                  key: DB_HOST
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: resortslite-secrets
+                  key: DB_USER
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: resortslite-secrets
+                  key: DB_PASS
+            - name: REDIS_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: resortslite-secrets
+                  key: REDIS_HOST
+            - name: REDIS_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: resortslite-secrets
+                  key: REDIS_PORT
+            - name: PAYMENT_API_URL
+              value: "{{PAYMENT_API_URL}}"
+            - name: INVENTORY_API_URL
+              value: "{{INVENTORY_API_URL}}"
+            - name: NOTIFICATION_API_URL
+              value: "{{NOTIFICATION_API_URL}}"
+            - name: REPORT_BASE_PATH
+              value: "/app/reports"
+            - name: BACKUP_PATH
+              value: "/app/backups"
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: reports-volume
+              mountPath: /app/reports
+      volumes:
+        - name: reports-volume
+          emptyDir: {}
