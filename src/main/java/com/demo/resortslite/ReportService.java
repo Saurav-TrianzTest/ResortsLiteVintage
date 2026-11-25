@@ -2,11 +2,16 @@ package com.demo.resortslite;
 
 import org.springframework.stereotype.Service;
 
-import java.io.File;
-import java.io.FileWriter;
+import software.amazon.awssdk.core.exception.SdkException;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+
+import javax.annotation.PreDestroy;
 import java.io.IOException;
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -20,12 +25,33 @@ public class ReportService {
 
     // VIOLATION czr-java-001 [Software Portability / Mandatory]: Windows-style absolute path
     // will fail on any Linux-based container or cloud host. Hard dependency on OS path structure.
-    private static final String BACKUP_PATH = "C:\\ResortBackups\\nightly\\"; // czr-java-001
+    // Now an S3 key prefix (bucket from APP_S3_BUCKET), not a host path.
+    private static final String BACKUP_PATH = "backups/nightly/"; // czr-java-001
 
     // VIOLATION [Software Portability / High]: Fixed server port hardcoded in application logic.
     // Container orchestration (ECS / EKS) dynamically assigns ports. Hardcoded ports prevent
     // dynamic port binding required for modern container deployment and service discovery.
-    private static final int SERVER_PORT = 8080; // czr-port-001
+    private static final int SERVER_PORT = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080")); // czr-port-001
+
+    private static final String S3_BUCKET_ENV = "APP_S3_BUCKET";
+    private static final String REPORT_KEY_PREFIX = "reports/";
+
+    private S3Client s3Client;
+
+    private synchronized S3Client s3() {
+        if (s3Client == null) {
+            s3Client = S3Client.create();
+        }
+        return s3Client;
+    }
+
+    @PreDestroy
+    public synchronized void closeS3() {
+        if (s3Client != null) {
+            s3Client.close();
+            s3Client = null;
+        }
+    }
 
     public Map<String, Object> generateMonthlyReport(String month, String year) {
         String fileName = "resort_report_" + month + "_" + year + ".csv";
@@ -34,22 +60,28 @@ public class ReportService {
         Map<String, Object> result = new HashMap<>();
 
         try {
-            File reportDir = new File(REPORT_BASE_PATH); // czr-java-001
-            if (!reportDir.exists()) {
-                reportDir.mkdirs();
+            String bucket = System.getenv(S3_BUCKET_ENV);
+            if (bucket == null || bucket.isEmpty()) {
+                throw new IOException(S3_BUCKET_ENV + " is not set");
             }
 
-            FileWriter writer = new FileWriter(fullPath);
-            writer.write("BookingID,GuestName,RoomType,CheckIn,CheckOut,Amount\n");
-            writer.write("BK-001,John Smith,SUITE,2024-03-01,2024-03-05,1750.00\n");
-            writer.write("BK-002,Jane Doe,DELUXE,2024-03-03,2024-03-07,960.00\n");
-            writer.close();
+            StringBuilder csv = new StringBuilder();
+            csv.append("BookingID,GuestName,RoomType,CheckIn,CheckOut,Amount\n");
+            csv.append("BK-001,John Smith,SUITE,2024-03-01,2024-03-05,1750.00\n");
+            csv.append("BK-002,Jane Doe,DELUXE,2024-03-03,2024-03-07,960.00\n");
+
+            PutObjectRequest putRequest = PutObjectRequest.builder()
+                    .bucket(bucket)
+                    .key(REPORT_KEY_PREFIX + fileName)
+                    .contentType("text/csv")
+                    .build();
+            s3().putObject(putRequest, RequestBody.fromString(csv.toString()));
 
             result.put("status", "generated");
             result.put("path", fullPath);
             result.put("serverPort", SERVER_PORT); // czr-port-001
 
-        } catch (IOException e) {
+        } catch (IOException | SdkException e) {
             result.put("status", "error");
             result.put("message", e.getMessage());
         }
@@ -67,7 +99,7 @@ public class ReportService {
     }
 
     public Map<String, Object> getSystemInfo() { // doc-missing-001
-        String timestamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+        String timestamp = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC).format(Instant.now());
         Map<String, Object> info = new HashMap<>();
         info.put("reportPath", REPORT_BASE_PATH);  // czr-java-001
         info.put("backupPath", BACKUP_PATH);        // czr-java-001

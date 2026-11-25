@@ -1,9 +1,14 @@
 package com.demo.resortslite;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import javax.servlet.http.HttpSession;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -16,7 +21,23 @@ public class BookingController {
 
     // VIOLATION cr-java-0067 [Cloud Compatibility / Mandatory]: In-memory cache without TTL
     // breaks horizontal scaling — cache is instance-local, invisible to other EC2 instances
-    private static final Map<String, Object> bookingCache = new HashMap<>(); // cr-java-0067
+    // Now held in ElastiCache for Redis with a TTL, shared by all instances.
+    private static final Duration BOOKING_CACHE_TTL = Duration.ofHours(1);
+    private static final String BOOKING_CACHE_PREFIX = "booking:";
+
+    @Autowired
+    private StringRedisTemplate redisTemplate;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    private void cacheBooking(String bookingId, Map<String, Object> booking) {
+        try {
+            redisTemplate.opsForValue().set(BOOKING_CACHE_PREFIX + bookingId,
+                    objectMapper.writeValueAsString(booking), BOOKING_CACHE_TTL);
+        } catch (DataAccessException | JsonProcessingException e) {
+            // the cache is best effort, as the in-memory map never failed the request
+        }
+    }
 
     @PostMapping("/create")
     public Map<String, Object> createBooking(
@@ -34,7 +55,7 @@ public class BookingController {
         session.setAttribute("lastBooking", booking); // cr-java-0065
         session.setAttribute("guestName", guestName); // cr-java-0065
 
-        bookingCache.put((String) booking.get("bookingId"), booking);
+        cacheBooking((String) booking.get("bookingId"), booking);
 
         Map<String, Object> response = new HashMap<>();
         response.put("status", "confirmed");
