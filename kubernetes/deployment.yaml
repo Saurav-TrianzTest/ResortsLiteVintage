@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: resortslite
+  namespace: resortslite
+  labels:
+    app: resortslite
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: resortslite
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: resortslite
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: resortslite
+          image: {{IMAGE_URI}}
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "docker"
+            - name: SERVER_PORT
+              value: "8080"
+            - name: TZ
+              value: "UTC"
+            - name: JAVA_OPTS
+              value: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -Xms256m"
+            - name: REDIS_HOST
+              value: "{{REDIS_HOST}}"
+            - name: REDIS_PORT
+              value: "{{REDIS_PORT}}"
+            - name: REDIS_SSL_ENABLED
+              value: "{{REDIS_SSL_ENABLED}}"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: resortslite-secrets
+                  key: REDIS_PASSWORD
+                  optional: true
+            - name: SESSION_REDIS_NAMESPACE
+              value: "{{SESSION_REDIS_NAMESPACE}}"
+            - name: BOOKING_CACHE_KEY_PREFIX
+              value: "{{BOOKING_CACHE_KEY_PREFIX}}"
+            - name: BOOKING_CACHE_TTL_SECONDS
+              value: "{{BOOKING_CACHE_TTL_SECONDS}}"
+            - name: REPORT_BASE_PATH
+              value: "/app/reports/"
+            - name: REPORT_BACKUP_PATH
+              value: "/app/backups/nightly/"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: reports
+              mountPath: /app/reports
+            - name: backups
+              mountPath: /app/backups
+      volumes:
+        - name: reports
+          emptyDir: {}
+        - name: backups
+          emptyDir: {}

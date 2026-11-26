@@ -1,0 +1,36 @@
+version: "3.8"
+
+services:
+  resortslite:
+    image: resortslite:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: resortslite
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SERVER_PORT: "8080"
+      TZ: UTC
+      JAVA_OPTS: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -Xms256m"
+      # External Redis (ElastiCache) - supply real values via shell env or .env file
+      REDIS_HOST: ${REDIS_HOST:-host.docker.internal}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_SSL_ENABLED: ${REDIS_SSL_ENABLED:-false}
+      SESSION_REDIS_NAMESPACE: ${SESSION_REDIS_NAMESPACE:-resortslite:session}
+      BOOKING_CACHE_KEY_PREFIX: ${BOOKING_CACHE_KEY_PREFIX:-resortslite:booking:}
+      BOOKING_CACHE_TTL_SECONDS: ${BOOKING_CACHE_TTL_SECONDS:-3600}
+      REPORT_BASE_PATH: /app/reports/
+      REPORT_BACKUP_PATH: /app/backups/nightly/
+    volumes:
+      - ./data/reports:/app/reports
+      - ./data/backups:/app/backups
+    networks:
+      - app-network
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge
