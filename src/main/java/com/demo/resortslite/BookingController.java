@@ -1,9 +1,14 @@
 package com.demo.resortslite;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import javax.servlet.http.HttpSession;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -14,9 +19,26 @@ public class BookingController {
     @Autowired
     private BookingService bookingService;
 
-    // VIOLATION cr-java-0067 [Cloud Compatibility / Mandatory]: In-memory cache without TTL
-    // breaks horizontal scaling — cache is instance-local, invisible to other EC2 instances
-    private static final Map<String, Object> bookingCache = new HashMap<>(); // cr-java-0067
+    // FIXED cr-java-0067: booking cache is stored in Amazon ElastiCache for Redis with a TTL,
+    // so it is shared across instances, centrally managed and bounded (entries expire).
+    private static final String CACHE_KEY_PREFIX = "resortslite:booking:";
+    private static final ObjectMapper CACHE_MAPPER = new ObjectMapper();
+
+    @Autowired
+    private StringRedisTemplate redisTemplate;
+
+    @Value("${app.cache.booking.ttl-seconds:900}")
+    private long bookingCacheTtlSeconds;
+
+    private void cacheBooking(String bookingId, Map<String, Object> booking) {
+        try {
+            redisTemplate.opsForValue().set(CACHE_KEY_PREFIX + bookingId,
+                    CACHE_MAPPER.writeValueAsString(booking),
+                    Duration.ofSeconds(bookingCacheTtlSeconds));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Unable to serialize booking for cache", e);
+        }
+    }
 
     @PostMapping("/create")
     public Map<String, Object> createBooking(
@@ -28,13 +50,12 @@ public class BookingController {
 
         Map<String, Object> booking = bookingService.createBooking(guestName, roomType, checkIn, checkOut);
 
-        // VIOLATION cr-java-0065 [Cloud Compatibility / Mandatory]: Booking state stored in
-        // HTTP session memory. AWS ALB distributes requests across EC2 instances — session
-        // data on instance A is invisible to instance B. Auto-scaling and failover breaks.
-        session.setAttribute("lastBooking", booking); // cr-java-0065
-        session.setAttribute("guestName", guestName); // cr-java-0065
+        // FIXED cr-java-0065: HttpSession is backed by Spring Session + Amazon ElastiCache for Redis,
+        // so session data is shared across all instances behind the ALB. Values must be Serializable.
+        session.setAttribute("lastBooking", new HashMap<>(booking));
+        session.setAttribute("guestName", guestName);
 
-        bookingCache.put((String) booking.get("bookingId"), booking);
+        cacheBooking((String) booking.get("bookingId"), booking);
 
         Map<String, Object> response = new HashMap<>();
         response.put("status", "confirmed");
@@ -47,9 +68,9 @@ public class BookingController {
             @PathVariable String bookingId,
             HttpSession session) {
 
-        // VIOLATION cr-java-0065 [Cloud Compatibility / Mandatory]: Reading business state
-        // from HTTP session — will return null on any other instance in the cluster.
-        String lastGuest = (String) session.getAttribute("guestName"); // cr-java-0065
+        // FIXED cr-java-0065: session is stored in ElastiCache Redis (Spring Session), so it is
+        // readable from any instance in the cluster.
+        String lastGuest = (String) session.getAttribute("guestName");
 
         Map<String, Object> result = new HashMap<>();
         result.put("bookingId", bookingId);

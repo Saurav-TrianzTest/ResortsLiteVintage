@@ -1,12 +1,19 @@
 package com.demo.resortslite;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.core.exception.SdkClientException;
 
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -16,40 +23,60 @@ public class ReportService {
     // VIOLATION czr-java-001 [Software Portability / Mandatory]: Hardcoded absolute path.
     // /var/legacy/reports does not exist in a Docker container image. Breaks containerisation.
     // Must use volume mounts, cloud object storage (S3 / Azure Blob), or environment variable.
-    private static final String REPORT_BASE_PATH = "/var/legacy/reports/"; // czr-java-001
+    // Now an S3 key prefix (not a filesystem path); configurable via environment.
+    private final String reportBasePath;
 
     // VIOLATION czr-java-001 [Software Portability / Mandatory]: Windows-style absolute path
     // will fail on any Linux-based container or cloud host. Hard dependency on OS path structure.
-    private static final String BACKUP_PATH = "C:\\ResortBackups\\nightly\\"; // czr-java-001
+    // Now an S3 key prefix (not a filesystem path); configurable via environment.
+    private final String backupPath;
 
-    // VIOLATION [Software Portability / High]: Fixed server port hardcoded in application logic.
-    // Container orchestration (ECS / EKS) dynamically assigns ports. Hardcoded ports prevent
-    // dynamic port binding required for modern container deployment and service discovery.
-    private static final int SERVER_PORT = 8080; // czr-port-001
+    // Target S3 bucket, supplied via environment variable REPORTS_S3_BUCKET.
+    private final String bucketName;
+
+    private final S3Client s3Client;
+
+    // Server port is externalized: injected from the SERVER_PORT environment variable
+    // (sourced from AWS Systems Manager Parameter Store by ECS/EKS/Elastic Beanstalk).
+    private final int serverPort;
+
+    @Autowired
+    public ReportService(S3Client s3Client,
+                         @Value("${app.reports.s3.bucket:${REPORTS_S3_BUCKET:resorts-reports}}") String bucketName,
+                         @Value("${app.reports.s3.prefix:${REPORTS_S3_PREFIX:reports/}}") String reportBasePath,
+                         @Value("${app.reports.s3.backup-prefix:${REPORTS_S3_BACKUP_PREFIX:backups/nightly/}}") String backupPath,
+                         @Value("${server.port:${SERVER_PORT:8080}}") int serverPort) {
+        this.serverPort = serverPort;
+        this.s3Client = s3Client;
+        this.bucketName = bucketName;
+        this.reportBasePath = reportBasePath;
+        this.backupPath = backupPath;
+    }
 
     public Map<String, Object> generateMonthlyReport(String month, String year) {
         String fileName = "resort_report_" + month + "_" + year + ".csv";
-        String fullPath = REPORT_BASE_PATH + fileName; // czr-java-001
+        String fullPath = reportBasePath + fileName; // S3 object key
 
         Map<String, Object> result = new HashMap<>();
 
         try {
-            File reportDir = new File(REPORT_BASE_PATH); // czr-java-001
-            if (!reportDir.exists()) {
-                reportDir.mkdirs();
-            }
+            StringBuilder csv = new StringBuilder();
+            csv.append("BookingID,GuestName,RoomType,CheckIn,CheckOut,Amount\n");
+            csv.append("BK-001,John Smith,SUITE,2024-03-01,2024-03-05,1750.00\n");
+            csv.append("BK-002,Jane Doe,DELUXE,2024-03-03,2024-03-07,960.00\n");
 
-            FileWriter writer = new FileWriter(fullPath);
-            writer.write("BookingID,GuestName,RoomType,CheckIn,CheckOut,Amount\n");
-            writer.write("BK-001,John Smith,SUITE,2024-03-01,2024-03-05,1750.00\n");
-            writer.write("BK-002,Jane Doe,DELUXE,2024-03-03,2024-03-07,960.00\n");
-            writer.close();
+            s3Client.putObject(PutObjectRequest.builder()
+                            .bucket(bucketName)
+                            .key(fullPath)
+                            .contentType("text/csv")
+                            .build(),
+                    RequestBody.fromString(csv.toString(), StandardCharsets.UTF_8));
 
             result.put("status", "generated");
-            result.put("path", fullPath);
-            result.put("serverPort", SERVER_PORT); // czr-port-001
+            result.put("path", "s3://" + bucketName + "/" + fullPath);
+            result.put("serverPort", serverPort);
 
-        } catch (IOException e) {
+        } catch (S3Exception | SdkClientException e) {
             result.put("status", "error");
             result.put("message", e.getMessage());
         }
@@ -67,11 +94,12 @@ public class ReportService {
     }
 
     public Map<String, Object> getSystemInfo() { // doc-missing-001
-        String timestamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+        String timestamp = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                .format(ZonedDateTime.now(Clock.systemUTC()).withZoneSameInstant(ZoneOffset.UTC));
         Map<String, Object> info = new HashMap<>();
-        info.put("reportPath", REPORT_BASE_PATH);  // czr-java-001
-        info.put("backupPath", BACKUP_PATH);        // czr-java-001
-        info.put("serverPort", SERVER_PORT);        // czr-port-001
+        info.put("reportPath", "s3://" + bucketName + "/" + reportBasePath);
+        info.put("backupPath", "s3://" + bucketName + "/" + backupPath);
+        info.put("serverPort", serverPort);
         info.put("generatedAt", timestamp);
         return info;
     }
