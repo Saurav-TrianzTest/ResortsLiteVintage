@@ -1,11 +1,16 @@
 package com.demo.resortslite;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import javax.servlet.http.HttpSession;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 @RestController
 @RequestMapping("/api/bookings")
@@ -14,9 +19,21 @@ public class BookingController {
     @Autowired
     private BookingService bookingService;
 
-    // VIOLATION cr-java-0067 [Cloud Compatibility / Mandatory]: In-memory cache without TTL
-    // breaks horizontal scaling — cache is instance-local, invisible to other EC2 instances
-    private static final Map<String, Object> bookingCache = new HashMap<>(); // cr-java-0067
+    // cz-java-0057: report directory injected from REPORT_BASE_PATH env var (ConfigMap)
+    @Value("${app.report.base-path:reports/}")
+    private String reportBasePath;
+
+    // cz-java-0070: local in-memory cache replaced by Amazon ElastiCache (Redis), shared across all containers
+    @Autowired
+    private StringRedisTemplate redisTemplate;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Value("${app.cache.booking.key-prefix:resortslite:booking:}")
+    private String bookingCacheKeyPrefix;
+
+    @Value("${app.cache.booking.ttl-seconds:3600}")
+    private long bookingCacheTtlSeconds;
 
     @PostMapping("/create")
     public Map<String, Object> createBooking(
@@ -28,13 +45,20 @@ public class BookingController {
 
         Map<String, Object> booking = bookingService.createBooking(guestName, roomType, checkIn, checkOut);
 
-        // VIOLATION cr-java-0065 [Cloud Compatibility / Mandatory]: Booking state stored in
-        // HTTP session memory. AWS ALB distributes requests across EC2 instances — session
-        // data on instance A is invisible to instance B. Auto-scaling and failover breaks.
+        // cz-java-0069: booking is a HashMap of Strings (Serializable) so Spring Session can persist it to Redis.
+        // cz-java-0063: HttpSession is backed by Spring Session + ElastiCache (Redis),
+        // so session data is shared across all instances/containers.
         session.setAttribute("lastBooking", booking); // cr-java-0065
         session.setAttribute("guestName", guestName); // cr-java-0065
 
-        bookingCache.put((String) booking.get("bookingId"), booking);
+        try {
+            redisTemplate.opsForValue().set(
+                    bookingCacheKeyPrefix + booking.get("bookingId"),
+                    objectMapper.writeValueAsString(booking),
+                    bookingCacheTtlSeconds, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            // cache is best-effort; do not fail the booking if Redis is unavailable
+        }
 
         Map<String, Object> response = new HashMap<>();
         response.put("status", "confirmed");
@@ -47,8 +71,7 @@ public class BookingController {
             @PathVariable String bookingId,
             HttpSession session) {
 
-        // VIOLATION cr-java-0065 [Cloud Compatibility / Mandatory]: Reading business state
-        // from HTTP session — will return null on any other instance in the cluster.
+        // cz-java-0063: session is externalized to Redis via Spring Session.
         String lastGuest = (String) session.getAttribute("guestName"); // cr-java-0065
 
         Map<String, Object> result = new HashMap<>();
@@ -77,7 +100,7 @@ public class BookingController {
         // VIOLATION czr-java-001 [Software Portability / Mandatory]: Hardcoded absolute
         // file path. This path does not exist inside a container image. Container images
         // have their own isolated file systems — /var/legacy/reports won't be present.
-        String reportPath = "/var/legacy/reports/" + month + "_bookings.pdf"; // czr-java-001
+        String reportPath = (reportBasePath.endsWith("/") ? reportBasePath : reportBasePath + "/") + month + "_bookings.pdf"; // czr-java-001
 
         Map<String, Object> response = new HashMap<>();
         response.put("reportPath", reportPath);
